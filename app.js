@@ -9,6 +9,9 @@ const pathomit = document.getElementById("pathomit");
 const ltres = document.getElementById("ltres");
 const qtres = document.getElementById("qtres");
 
+const removeLightBg = document.getElementById("removeLightBg");
+const lightBgThreshold = document.getElementById("lightBgThreshold");
+
 const sampleStep = document.getElementById("sampleStep");
 const exportScale = document.getElementById("exportScale");
 const exportName = document.getElementById("exportName");
@@ -17,6 +20,7 @@ const thresholdValue = document.getElementById("thresholdValue");
 const pathomitValue = document.getElementById("pathomitValue");
 const ltresValue = document.getElementById("ltresValue");
 const qtresValue = document.getElementById("qtresValue");
+const lightBgThresholdValue = document.getElementById("lightBgThresholdValue");
 
 const traceBtn = document.getElementById("traceBtn");
 const downloadSvgBtn = document.getElementById("downloadSvgBtn");
@@ -42,6 +46,9 @@ function updateValueLabels() {
   pathomitValue.textContent = pathomit.value;
   ltresValue.textContent = ltres.value;
   qtresValue.textContent = qtres.value;
+  if (lightBgThresholdValue) {
+    lightBgThresholdValue.textContent = lightBgThreshold.value;
+  }
 }
 
 function setDefaultCanvas() {
@@ -76,10 +83,127 @@ function fitImageToCanvas(img, canvas) {
   return { x, y, drawW, drawH };
 }
 
+function removeLightBackgroundFromImageData(imageData, thresholdValueNum = 225) {
+  const data = imageData.data;
+
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const a = data[i + 3];
+
+    if (a === 0) {
+      data[i] = 255;
+      data[i + 1] = 255;
+      data[i + 2] = 255;
+      data[i + 3] = 0;
+      continue;
+    }
+
+    const maxCh = Math.max(r, g, b);
+    const minCh = Math.min(r, g, b);
+    const brightness = (r + g + b) / 3;
+    const saturation = maxCh - minCh;
+
+    const isVeryLight = brightness >= thresholdValueNum;
+    const isLowSaturationLight = brightness >= (thresholdValueNum - 12) && saturation <= 20;
+
+    if (isVeryLight || isLowSaturationLight) {
+      data[i] = 255;
+      data[i + 1] = 255;
+      data[i + 2] = 255;
+      data[i + 3] = 0;
+    }
+  }
+}
+
+function cropImageDataToVisibleBounds(imageData, alphaCutoff = 10) {
+  const { width, height, data } = imageData;
+
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const a = data[i + 3];
+
+      if (a > alphaCutoff) {
+        if (x < minX) minX = x;
+        if (y < minY) minY = y;
+        if (x > maxX) maxX = x;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+
+  if (maxX < minX || maxY < minY) {
+    return imageData;
+  }
+
+  const cropW = maxX - minX + 1;
+  const cropH = maxY - minY + 1;
+
+  const tempCanvas = document.createElement("canvas");
+  tempCanvas.width = cropW;
+  tempCanvas.height = cropH;
+  const tctx = tempCanvas.getContext("2d");
+
+  const cropped = tctx.createImageData(cropW, cropH);
+
+  for (let y = 0; y < cropH; y++) {
+    for (let x = 0; x < cropW; x++) {
+      const srcI = ((y + minY) * width + (x + minX)) * 4;
+      const dstI = (y * cropW + x) * 4;
+
+      cropped.data[dstI] = data[srcI];
+      cropped.data[dstI + 1] = data[srcI + 1];
+      cropped.data[dstI + 2] = data[srcI + 2];
+      cropped.data[dstI + 3] = data[srcI + 3];
+    }
+  }
+
+  return cropped;
+}
+
+function drawImageDataToPreview(imageData) {
+  const tempCanvas = document.createElement("canvas");
+  tempCanvas.width = imageData.width;
+  tempCanvas.height = imageData.height;
+  const tctx = tempCanvas.getContext("2d");
+  tctx.putImageData(imageData, 0, 0);
+
+  setDefaultCanvas();
+
+  const scale = Math.min(
+    previewCanvas.width / imageData.width,
+    previewCanvas.height / imageData.height
+  );
+
+  const drawW = imageData.width * scale;
+  const drawH = imageData.height * scale;
+  const x = (previewCanvas.width - drawW) / 2;
+  const y = (previewCanvas.height - drawH) / 2;
+
+  ctx.drawImage(tempCanvas, x, y, drawW, drawH);
+}
+
 function captureOriginalImageData() {
   if (!originalImage) return;
+
   fitImageToCanvas(originalImage, previewCanvas);
-  originalImageData = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+
+  let imgData = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+
+  if (removeLightBg && removeLightBg.checked) {
+    removeLightBackgroundFromImageData(imgData, Number(lightBgThreshold.value));
+  }
+
+  imgData = cropImageDataToVisibleBounds(imgData, 10);
+  originalImageData = imgData;
+  drawImageDataToPreview(imgData);
 }
 
 function applyThresholdPreview() {
@@ -87,7 +211,14 @@ function applyThresholdPreview() {
 
   fitImageToCanvas(originalImage, previewCanvas);
 
-  const imageData = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+  let imageData = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+
+  if (removeLightBg && removeLightBg.checked) {
+    removeLightBackgroundFromImageData(imageData, Number(lightBgThreshold.value));
+  }
+
+  imageData = cropImageDataToVisibleBounds(imageData, 10);
+
   const data = imageData.data;
   const t = Number(threshold.value);
   const invertOn = invert.checked;
@@ -121,13 +252,13 @@ function applyThresholdPreview() {
     despeckleBinary(imageData, 1);
   }
 
-  ctx.putImageData(imageData, 0, 0);
-  processedImageData = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+  processedImageData = imageData;
+  drawImageDataToPreview(imageData);
 }
 
 function showOriginalPreview() {
   if (!originalImage) return;
-  fitImageToCanvas(originalImage, previewCanvas);
+  captureOriginalImageData();
 }
 
 function despeckleBinary(imageData, passes = 1) {
@@ -209,7 +340,6 @@ function traceCurrentImage() {
 
     if (isColorMode) {
       captureOriginalImageData();
-      showOriginalPreview();
       sourceImageData = originalImageData;
     } else {
       applyThresholdPreview();
@@ -307,7 +437,7 @@ function shouldKeepPolyline(points, minLength = 2, minSize = 1) {
 function splitPathDataIntoSubpaths(d) {
   if (!d || !d.trim()) return [];
   const matches = d.match(/[Mm][^Mm]*/g);
-  return matches ? matches.map(s => s.trim()).filter(Boolean) : [d.trim()];
+  return matches ? matches.map((s) => s.trim()).filter(Boolean) : [d.trim()];
 }
 
 function sampleSvgPaths(svgString, pxStep = 3) {
@@ -431,8 +561,8 @@ function normalizePolylinesForDxf(polylines, vbHeight, scaleFactor) {
   let maxX = -Infinity;
   let maxY = -Infinity;
 
-  const converted = polylines.map(poly => {
-    const pts = poly.points.map(p => {
+  const converted = polylines.map((poly) => {
+    const pts = poly.points.map((p) => {
       const x = p.x * scaleFactor;
       const y = (vbHeight - p.y) * scaleFactor;
       return { x, y };
@@ -451,9 +581,9 @@ function normalizePolylinesForDxf(polylines, vbHeight, scaleFactor) {
     };
   });
 
-  const shifted = converted.map(poly => ({
+  const shifted = converted.map((poly) => ({
     closed: poly.closed,
-    points: poly.points.map(p => ({
+    points: poly.points.map((p) => ({
       x: p.x - minX,
       y: p.y - minY
     }))
@@ -553,7 +683,7 @@ function exportDxf() {
   try {
     const sampled = sampleSvgPaths(tracedSvgString, step);
 
-    const filteredPolys = sampled.polylines.filter(poly => {
+    const filteredPolys = sampled.polylines.filter((poly) => {
       const bounds = getPolylineBounds(poly.points);
       return bounds.width > 1 || bounds.height > 1;
     });
@@ -572,7 +702,7 @@ function exportDxf() {
     setStatus(`DXF downloaded. ${normalized.polylines.length} clean polylines exported.`);
   } catch (error) {
     console.error(error);
-    setStatus("DXF export failed. Try Color Trace, lower color count, or raise path omit.");
+    setStatus("DXF export failed. Try Color Trace, lower color count, raise path omit, or increase background cleanup.");
   }
 }
 
@@ -625,7 +755,7 @@ pngFile.addEventListener("change", (event) => {
       downloadSvgBtn.disabled = true;
       downloadDxfBtn.disabled = true;
 
-      setStatus(`Loaded ${file.name}. Use Color Trace for multi-color transparent logos.`);
+      setStatus(`Loaded ${file.name}. Use Color Trace and light background removal for logos like Jurassic Park.`);
     };
     img.src = e.target.result;
   };
@@ -633,14 +763,40 @@ pngFile.addEventListener("change", (event) => {
   reader.readAsDataURL(file);
 });
 
-[threshold, invert, despeckle, pathomit, ltres, qtres].forEach((el) => {
+[
+  threshold,
+  invert,
+  despeckle,
+  pathomit,
+  ltres,
+  qtres,
+  lightBgThreshold
+].forEach((el) => {
+  if (!el) return;
+
   el.addEventListener("input", () => {
     updateValueLabels();
-    if (traceMode.value === "binary" && originalImage) {
-      applyThresholdPreview();
+    if (originalImage) {
+      if (traceMode.value === "binary") {
+        applyThresholdPreview();
+      } else {
+        captureOriginalImageData();
+      }
     }
   });
 });
+
+if (removeLightBg) {
+  removeLightBg.addEventListener("change", () => {
+    if (originalImage) {
+      if (traceMode.value === "binary") {
+        applyThresholdPreview();
+      } else {
+        captureOriginalImageData();
+      }
+    }
+  });
+}
 
 traceMode.addEventListener("change", () => {
   refreshPreviewByMode();
