@@ -10,6 +10,8 @@ const ltres = document.getElementById("ltres");
 const qtres = document.getElementById("qtres");
 
 const removeLightBg = document.getElementById("removeLightBg");
+const removeSmallJunk = document.getElementById("removeSmallJunk");
+const preferLogoShapes = document.getElementById("preferLogoShapes");
 const lightBgThreshold = document.getElementById("lightBgThreshold");
 
 const sampleStep = document.getElementById("sampleStep");
@@ -27,6 +29,9 @@ const downloadDxfBtn = document.getElementById("downloadDxfBtn");
 const clearBtn = document.getElementById("clearBtn");
 const statusBox = document.getElementById("status");
 
+const loadingOverlay = document.getElementById("loadingOverlay");
+const loadingText = document.getElementById("loadingText");
+
 const previewCanvas = document.getElementById("previewCanvas");
 const previewCtx = previewCanvas.getContext("2d");
 
@@ -41,6 +46,15 @@ function setStatus(message) {
   statusBox.textContent = message;
 }
 
+function showLoading(message) {
+  loadingText.textContent = message || "Processing image.";
+  loadingOverlay.classList.remove("hidden");
+}
+
+function hideLoading() {
+  loadingOverlay.classList.add("hidden");
+}
+
 function updateValueLabels() {
   thresholdValue.textContent = threshold.value;
   pathomitValue.textContent = pathomit.value;
@@ -51,7 +65,7 @@ function updateValueLabels() {
 
 function clearCanvas(ctx, canvas) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = "#ffffff";
+  ctx.fillStyle = "#f3f4f6";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
@@ -151,6 +165,12 @@ function cropImageDataToVisibleBounds(imageData, alphaCutoff = 10) {
   if (maxX < minX || maxY < minY) {
     return imageData;
   }
+
+  const pad = 3;
+  minX = Math.max(0, minX - pad);
+  minY = Math.max(0, minY - pad);
+  maxX = Math.min(width - 1, maxX + pad);
+  maxY = Math.min(height - 1, maxY + pad);
 
   const cropW = maxX - minX + 1;
   const cropH = maxY - minY + 1;
@@ -308,15 +328,6 @@ function despeckleBinary(imageData, passes = 1) {
   }
 }
 
-function countSvgPaths(svgString) {
-  try {
-    const doc = new DOMParser().parseFromString(svgString, "image/svg+xml");
-    return doc.querySelectorAll("path").length;
-  } catch (error) {
-    return 0;
-  }
-}
-
 function distance(a, b) {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
@@ -357,6 +368,70 @@ function getPolylineBounds(points) {
     width: maxX - minX,
     height: maxY - minY
   };
+}
+
+function getAllPolylinesBounds(polylines) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const poly of polylines) {
+    for (const p of poly.points) {
+      if (p.x < minX) minX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y > maxY) maxY = p.y;
+    }
+  }
+
+  if (!isFinite(minX)) {
+    return { minX: 0, minY: 0, maxX: 0, maxY: 0, width: 0, height: 0 };
+  }
+
+  return {
+    minX,
+    minY,
+    maxX,
+    maxY,
+    width: maxX - minX,
+    height: maxY - minY
+  };
+}
+
+function polylineMatchesOuterBounds(poly, allBounds, tolerance = 2) {
+  if (!poly || !poly.points || poly.points.length < 4) return false;
+
+  const b = getPolylineBounds(poly.points);
+
+  const touchesLeft = Math.abs(b.minX - allBounds.minX) <= tolerance;
+  const touchesRight = Math.abs(b.maxX - allBounds.maxX) <= tolerance;
+  const touchesBottom = Math.abs(b.minY - allBounds.minY) <= tolerance;
+  const touchesTop = Math.abs(b.maxY - allBounds.maxY) <= tolerance;
+
+  const widthClose = Math.abs(b.width - allBounds.width) <= tolerance * 2;
+  const heightClose = Math.abs(b.height - allBounds.height) <= tolerance * 2;
+
+  return touchesLeft && touchesRight && touchesBottom && touchesTop && widthClose && heightClose;
+}
+
+function removeOuterBorderPolyline(polylines) {
+  if (!polylines || polylines.length < 2) return polylines;
+
+  const allBounds = getAllPolylinesBounds(polylines);
+
+  return polylines.filter((poly) => {
+    const b = getPolylineBounds(poly.points);
+
+    const hugeEnough =
+      b.width >= allBounds.width * 0.95 &&
+      b.height >= allBounds.height * 0.95;
+
+    if (!hugeEnough) return true;
+
+    const isBorder = polylineMatchesOuterBounds(poly, allBounds, 2);
+    return !isBorder;
+  });
 }
 
 function shouldKeepPolyline(points, minLength = 2, minSize = 1) {
@@ -472,9 +547,7 @@ function sampleSvgPaths(svgString, pxStep = 3) {
         }
       }
 
-      if (!shouldKeepPolyline(cleanPts, 2, 1)) {
-        continue;
-      }
+      if (!shouldKeepPolyline(cleanPts, 2, 1)) continue;
 
       polylines.push({
         closed,
@@ -493,6 +566,68 @@ function sampleSvgPaths(svgString, pxStep = 3) {
     polylines,
     viewBox: { x: vbX, y: vbY, width: vbW, height: vbH }
   };
+}
+
+function removeTinyJunkPolylines(polylines) {
+  if (!removeSmallJunk.checked || !polylines.length) return polylines;
+
+  const allBounds = getAllPolylinesBounds(polylines);
+  const minW = Math.max(3, allBounds.width * 0.012);
+  const minH = Math.max(3, allBounds.height * 0.012);
+  const minArea = Math.max(18, (allBounds.width * allBounds.height) * 0.00008);
+
+  return polylines.filter(poly => {
+    const b = getPolylineBounds(poly.points);
+    const area = b.width * b.height;
+
+    const tinyBox = b.width < minW && b.height < minH;
+    const tinyArea = area < minArea;
+
+    return !(tinyBox || tinyArea);
+  });
+}
+
+function removeLikelyCornerCopyright(polylines) {
+  if (!removeSmallJunk.checked || !polylines.length) return polylines;
+
+  const allBounds = getAllPolylinesBounds(polylines);
+  const rightZone = allBounds.minX + allBounds.width * 0.82;
+  const bottomZone = allBounds.minY + allBounds.height * 0.82;
+
+  return polylines.filter(poly => {
+    const b = getPolylineBounds(poly.points);
+    const small = b.width < allBounds.width * 0.14 && b.height < allBounds.height * 0.08;
+    const inCorner = b.minX >= rightZone && b.minY >= bottomZone;
+    return !(small && inCorner);
+  });
+}
+
+function keepLargestMeaningfulShapes(polylines) {
+  if (!preferLogoShapes.checked || polylines.length < 8) return polylines;
+
+  const ranked = polylines.map(poly => {
+    const b = getPolylineBounds(poly.points);
+    return {
+      poly,
+      score: (b.width * b.height) + poly.points.length * 0.6
+    };
+  });
+
+  ranked.sort((a, b) => b.score - a.score);
+
+  const keepCount = Math.min(Math.max(6, Math.floor(ranked.length * 0.7)), ranked.length);
+  const kept = ranked.slice(0, keepCount).map(item => item.poly);
+
+  return kept.length ? kept : polylines;
+}
+
+function cleanupPolylines(polylines) {
+  let out = polylines.slice();
+  out = removeOuterBorderPolyline(out);
+  out = removeTinyJunkPolylines(out);
+  out = removeLikelyCornerCopyright(out);
+  out = keepLargestMeaningfulShapes(out);
+  return out;
 }
 
 function normalizePolylinesForDxf(polylines, vbHeight, scaleFactor) {
@@ -646,16 +781,15 @@ function scoreTraceResult(normalizedPolylines) {
   const polyCount = normalizedPolylines.length;
 
   let score = 0;
-
   score += Math.min(area / 500, 300);
   score += Math.min(closedCount * 8, 120);
 
-  if (polyCount >= 2 && polyCount <= 80) score += 100;
-  else if (polyCount <= 150) score += 40;
+  if (polyCount >= 2 && polyCount <= 60) score += 120;
+  else if (polyCount <= 120) score += 50;
   else score -= Math.min(polyCount, 300);
 
-  if (totalPoints < 8000) score += 80;
-  else score -= Math.min((totalPoints - 8000) / 20, 300);
+  if (totalPoints < 7000) score += 90;
+  else score -= Math.min((totalPoints - 7000) / 18, 320);
 
   if (width > 40 && height > 40) score += 80;
   if (width < 10 || height < 10) score -= 120;
@@ -664,68 +798,32 @@ function scoreTraceResult(normalizedPolylines) {
 }
 
 function buildAutoPresets() {
+  const step = Number(sampleStep.value) || 3;
+
   return [
-    {
-      label: "Color 4 / omit 12",
-      mode: "color",
-      colors: 4,
-      pathomit: 12,
-      ltres: 2,
-      qtres: 2,
-      sampleStep: Number(sampleStep.value) || 3
-    },
-    {
-      label: "Color 3 / omit 14",
-      mode: "color",
-      colors: 3,
-      pathomit: 14,
-      ltres: 2,
-      qtres: 2,
-      sampleStep: Number(sampleStep.value) || 3
-    },
-    {
-      label: "Color 5 / omit 10",
-      mode: "color",
-      colors: 5,
-      pathomit: 10,
-      ltres: 1.8,
-      qtres: 1.8,
-      sampleStep: Number(sampleStep.value) || 3
-    },
-    {
-      label: "Binary 140 / omit 12",
-      mode: "binary",
-      threshold: 140,
-      invert: false,
-      despeckle: true,
-      pathomit: 12,
-      ltres: 2,
-      qtres: 2,
-      sampleStep: Number(sampleStep.value) || 3
-    },
-    {
-      label: "Binary 160 / omit 14",
-      mode: "binary",
-      threshold: 160,
-      invert: false,
-      despeckle: true,
-      pathomit: 14,
-      ltres: 2.5,
-      qtres: 2.5,
-      sampleStep: Number(sampleStep.value) || 3
-    },
-    {
-      label: "Binary 120 / omit 10",
-      mode: "binary",
-      threshold: 120,
-      invert: false,
-      despeckle: true,
-      pathomit: 10,
-      ltres: 1.8,
-      qtres: 1.8,
-      sampleStep: Number(sampleStep.value) || 3
-    }
+    { label: "Color 4 / omit 14", mode: "color", colors: 4, pathomit: 14, ltres: 2.2, qtres: 2.2, sampleStep: step },
+    { label: "Color 3 / omit 16", mode: "color", colors: 3, pathomit: 16, ltres: 2.5, qtres: 2.5, sampleStep: step },
+    { label: "Color 5 / omit 12", mode: "color", colors: 5, pathomit: 12, ltres: 2.0, qtres: 2.0, sampleStep: step },
+    { label: "Binary 150 / omit 14", mode: "binary", threshold: 150, invert: false, despeckle: true, pathomit: 14, ltres: 2.4, qtres: 2.4, sampleStep: step },
+    { label: "Binary 135 / omit 12", mode: "binary", threshold: 135, invert: false, despeckle: true, pathomit: 12, ltres: 2.1, qtres: 2.1, sampleStep: step },
+    { label: "Binary 165 / omit 16", mode: "binary", threshold: 165, invert: false, despeckle: true, pathomit: 16, ltres: 2.8, qtres: 2.8, sampleStep: step }
   ];
+}
+
+function buildManualPreset() {
+  const mode = traceMode.value === "auto" ? "color" : traceMode.value;
+  return {
+    label: "Manual",
+    mode,
+    colors: Math.max(2, Math.min(16, Number(numColors.value) || 4)),
+    threshold: Number(threshold.value),
+    invert: invert.checked,
+    despeckle: despeckle.checked,
+    pathomit: Number(pathomit.value),
+    ltres: Number(ltres.value),
+    qtres: Number(qtres.value),
+    sampleStep: Number(sampleStep.value) || 3
+  };
 }
 
 function runPresetTrace(baseImageData, preset) {
@@ -749,10 +847,12 @@ function runPresetTrace(baseImageData, preset) {
   const svg = ImageTracer.imagedataToSVG(sourceImageData, makeTraceOptions(preset));
   const sampled = sampleSvgPaths(svg, preset.sampleStep);
 
-  const filteredPolys = sampled.polylines.filter((poly) => {
+  let filteredPolys = sampled.polylines.filter((poly) => {
     const bounds = getPolylineBounds(poly.points);
     return bounds.width > 1 || bounds.height > 1;
   });
+
+  filteredPolys = cleanupPolylines(filteredPolys);
 
   const normalized = normalizePolylinesForDxf(
     filteredPolys,
@@ -768,20 +868,32 @@ function runPresetTrace(baseImageData, preset) {
   };
 }
 
-function autoTraceImage() {
+async function autoTraceImage() {
   if (!originalImage) {
     setStatus("Load a PNG first.");
     return;
   }
 
+  showLoading("Cleaning artwork and building trace candidates…");
+
   try {
+    await new Promise((r) => setTimeout(r, 40));
+
     const baseImageData = buildBaseImageData();
     drawImageDataToPreview(baseImageData);
 
-    const presets = buildAutoPresets();
+    const presets =
+      traceMode.value === "auto"
+        ? buildAutoPresets()
+        : [buildManualPreset()];
+
     const results = [];
 
-    for (const preset of presets) {
+    for (let i = 0; i < presets.length; i++) {
+      const preset = presets[i];
+      loadingText.textContent = `Testing ${preset.label}…`;
+      await new Promise((r) => setTimeout(r, 20));
+
       try {
         const result = runPresetTrace(baseImageData, preset);
         if (result.polylines.length) {
@@ -793,7 +905,7 @@ function autoTraceImage() {
     }
 
     if (!results.length) {
-      throw new Error("All auto-trace presets failed.");
+      throw new Error("All trace presets failed.");
     }
 
     results.sort((a, b) => b.score - a.score);
@@ -802,35 +914,32 @@ function autoTraceImage() {
     tracedSvgString = best.svg;
     currentDxfPolylines = best.polylines;
     drawDxfPreview(currentDxfPolylines);
-
     downloadDxfBtn.disabled = false;
 
-    const detectedMode = best.preset.mode === "color" ? "Color" : "Binary";
-    setStatus(
-      `Auto Trace complete. Chosen preset: ${best.preset.label}. ${currentDxfPolylines.length} clean polylines ready.`
-    );
+    if (traceMode.value === "auto") {
+      if (best.preset.mode === "color") {
+        numColors.value = String(best.preset.colors);
+      } else {
+        threshold.value = String(best.preset.threshold);
+        invert.checked = !!best.preset.invert;
+        despeckle.checked = !!best.preset.despeckle;
+      }
 
-    traceMode.value = best.preset.mode;
-    pathomit.value = String(best.preset.pathomit);
-    ltres.value = String(best.preset.ltres);
-    qtres.value = String(best.preset.qtres);
-
-    if (best.preset.mode === "color") {
-      numColors.value = String(best.preset.colors);
-    } else {
-      threshold.value = String(best.preset.threshold);
-      invert.checked = !!best.preset.invert;
-      despeckle.checked = !!best.preset.despeckle;
+      pathomit.value = String(best.preset.pathomit);
+      ltres.value = String(best.preset.ltres);
+      qtres.value = String(best.preset.qtres);
+      updateValueLabels();
     }
 
-    updateValueLabels();
-    console.log("Best preset mode:", detectedMode, best);
+    setStatus(`Trace complete. Chosen preset: ${best.preset.label}. ${currentDxfPolylines.length} clean polylines ready.`);
   } catch (error) {
     console.error(error);
     tracedSvgString = "";
     currentDxfPolylines = [];
     setDefaultDxfCanvas();
-    setStatus("Auto Trace failed. Try a cleaner PNG or stronger background removal.");
+    setStatus("Trace failed. Try a cleaner PNG or stronger background cleanup.");
+  } finally {
+    hideLoading();
   }
 }
 
@@ -900,7 +1009,7 @@ function downloadTextFile(content, fileName, mimeType) {
 
 function exportDxf() {
   if (!currentDxfPolylines.length) {
-    setStatus("No DXF geometry available. Click Trace PNG first.");
+    setStatus("No DXF geometry available. Click Auto Trace PNG first.");
     return;
   }
 
@@ -927,7 +1036,6 @@ function clearAll() {
   setDefaultDxfCanvas();
 
   downloadDxfBtn.disabled = true;
-
   setStatus("Load a PNG to begin.");
 }
 
@@ -949,7 +1057,7 @@ pngFile.addEventListener("change", (event) => {
       setDefaultDxfCanvas();
       downloadDxfBtn.disabled = true;
 
-      setStatus(`Loaded ${file.name}. Click Trace PNG and NorrisDXF will auto-pick the best trace.`);
+      setStatus(`Loaded ${file.name}. Click Auto Trace PNG and NorrisDXF will do the heavy lifting.`);
     };
     img.src = e.target.result;
   };
@@ -973,8 +1081,10 @@ pngFile.addEventListener("change", (event) => {
   });
 });
 
-removeLightBg.addEventListener("change", () => {
-  if (originalImage) showCurrentImagePreview();
+[removeLightBg, removeSmallJunk, preferLogoShapes].forEach((el) => {
+  el.addEventListener("change", () => {
+    if (originalImage) showCurrentImagePreview();
+  });
 });
 
 traceMode.addEventListener("change", () => {
