@@ -101,7 +101,8 @@ body {
 
 input[type="file"],
 input[type="number"],
-input[type="text"] {
+input[type="text"],
+select {
   width: 100%;
   background: #0a1224;
   color: var(--text);
