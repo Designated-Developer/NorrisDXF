@@ -4,12 +4,19 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>NorrisDXF</title>
-  <meta name="description" content="Convert PNG artwork into traced DXF files with a live DXF preview." />
+  <meta name="description" content="Convert PNG artwork into DXF files with live DXF preview." />
   <link rel="stylesheet" href="style.css" />
-
   <script src="https://cdn.jsdelivr.net/npm/imagetracerjs@1.2.6/imagetracer_v1.2.6.min.js"></script>
 </head>
 <body>
+  <div id="loadingOverlay" class="loading-overlay hidden">
+    <div class="loading-card">
+      <div class="spinner"></div>
+      <div class="loading-title">Processing image…</div>
+      <div class="loading-subtitle" id="loadingText">Cleaning artwork and building DXF preview.</div>
+    </div>
+  </div>
+
   <header class="topbar">
     <div class="brand">
       <h1>NorrisDXF</h1>
@@ -24,7 +31,7 @@
         <label class="label" for="pngFile">PNG file</label>
         <input id="pngFile" type="file" accept=".png,image/png,image/*" />
         <p class="helper">
-          Use Color Trace for logos. Use Binary Trace for simple black-and-white artwork.
+          Best for logos, silhouettes, and clean artwork.
         </p>
       </section>
 
@@ -33,7 +40,8 @@
 
         <label class="label" for="traceMode">Mode</label>
         <select id="traceMode">
-          <option value="color" selected>Color Trace</option>
+          <option value="auto" selected>Auto</option>
+          <option value="color">Color Trace</option>
           <option value="binary">Binary Trace</option>
         </select>
 
@@ -41,7 +49,7 @@
         <input id="numColors" type="number" min="2" max="16" step="1" value="4" />
 
         <p class="helper">
-          Start with 3 to 6 colors for logos. Too many colors usually creates junk geometry.
+          Auto mode will try multiple presets and pick the best result.
         </p>
       </section>
 
@@ -59,8 +67,13 @@
           <span id="lightBgThresholdValue">225</span>
         </div>
 
+        <label class="checkline">
+          <input id="removeSmallJunk" type="checkbox" checked />
+          <span>Remove small junk / copyright marks</span>
+        </label>
+
         <p class="helper">
-          Useful for checkerboard previews, fake transparency, and light gray backgrounds.
+          Useful for checkerboard previews, fake transparency, and tiny raster junk.
         </p>
       </section>
 
@@ -89,8 +102,8 @@
 
         <label class="label" for="pathomit">Path omit</label>
         <div class="range-row">
-          <input id="pathomit" type="range" min="0" max="40" value="10" />
-          <span id="pathomitValue">10</span>
+          <input id="pathomit" type="range" min="0" max="40" value="12" />
+          <span id="pathomitValue">12</span>
         </div>
 
         <label class="label" for="ltres">Line threshold</label>
@@ -104,6 +117,11 @@
           <input id="qtres" type="range" min="0.1" max="10" step="0.1" value="2" />
           <span id="qtresValue">2</span>
         </div>
+
+        <label class="checkline">
+          <input id="preferLogoShapes" type="checkbox" checked />
+          <span>Prefer logo shapes over tiny detail</span>
+        </label>
       </section>
 
       <section class="section">
@@ -119,7 +137,7 @@
         <input id="exportName" type="text" value="norrisdxf-output" />
 
         <div class="button-stack">
-          <button id="traceBtn" class="btn btn-primary">Trace PNG</button>
+          <button id="traceBtn" class="btn btn-primary">Auto Trace PNG</button>
           <button id="downloadDxfBtn" class="btn" disabled>Download DXF</button>
           <button id="clearBtn" class="btn btn-danger">Clear</button>
         </div>
@@ -157,8 +175,8 @@
       <div class="card notes">
         <h2>Reality check</h2>
         <p>
-          This previews the exported DXF-style polyline geometry, not the raw SVG trace.
-          That means what you see here is much closer to what NorrisCAM will actually read.
+          This is tuned for usable CNC-style DXF output, not perfect art reproduction.
+          That means it intentionally prefers cleaner shapes over preserving every tiny raster detail.
         </p>
       </div>
     </section>
