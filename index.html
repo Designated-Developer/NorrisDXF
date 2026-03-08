@@ -13,7 +13,7 @@
   <header class="topbar">
     <div class="brand">
       <h1>NorrisDXF</h1>
-      <p>PNG to SVG + DXF for clean artwork, logos, and silhouettes</p>
+      <p>PNG to SVG + DXF for logos, silhouettes, and clean artwork</p>
     </div>
   </header>
 
@@ -24,8 +24,7 @@
         <label class="label" for="pngFile">PNG file</label>
         <input id="pngFile" type="file" accept=".png,image/png,image/*" />
         <p class="helper">
-          For logos like the Lakers image, use <strong>Color Trace</strong>.
-          For simple black-and-white art, use <strong>Binary Trace</strong>.
+          Use Color Trace for multi-color logos. Use Binary Trace for simple black and white art.
         </p>
       </section>
 
@@ -42,7 +41,26 @@
         <input id="numColors" type="number" min="2" max="16" step="1" value="6" />
 
         <p class="helper">
-          For the Lakers logo, 5 to 8 colors is usually enough.
+          Start with 3 to 6 colors for logos. Too many colors creates junk geometry.
+        </p>
+      </section>
+
+      <section class="section">
+        <h2>Background Cleanup</h2>
+
+        <label class="checkline">
+          <input id="removeLightBg" type="checkbox" checked />
+          <span>Remove light background</span>
+        </label>
+
+        <label class="label" for="lightBgThreshold">Light background threshold</label>
+        <div class="range-row">
+          <input id="lightBgThreshold" type="range" min="180" max="255" value="225" />
+          <span id="lightBgThresholdValue">225</span>
+        </div>
+
+        <p class="helper">
+          Useful for checkerboard previews, light gray backgrounds, and fake transparency.
         </p>
       </section>
 
@@ -86,6 +104,10 @@
           <input id="qtres" type="range" min="0.1" max="10" step="0.1" value="1.5" />
           <span id="qtresValue">1.5</span>
         </div>
+
+        <p class="helper">
+          Higher path omit removes tiny junk details. Higher thresholds simplify the trace.
+        </p>
       </section>
 
       <section class="section">
@@ -119,7 +141,7 @@
         <div class="card panel">
           <div class="panel-header">
             <h2>Preview</h2>
-            <p>Original or thresholded preview</p>
+            <p>Original, cleaned, or thresholded preview</p>
           </div>
           <div class="panel-body canvas-body">
             <canvas id="previewCanvas" width="1000" height="1000"></canvas>
@@ -140,9 +162,8 @@
       <div class="card notes">
         <h2>Reality check</h2>
         <p>
-          The old export failed because complex traced SVG paths were being handed to a DXF importer
-          that choked on them. This version samples the SVG into point-based polylines and writes the
-          DXF directly, which is much more reliable for logos like the Lakers image.
+          This works best on clean logo-style artwork. Messy raster images can still be usable,
+          but they will never be as clean as a real vector source.
         </p>
       </div>
     </section>
