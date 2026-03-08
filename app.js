@@ -23,19 +23,21 @@ const qtresValue = document.getElementById("qtresValue");
 const lightBgThresholdValue = document.getElementById("lightBgThresholdValue");
 
 const traceBtn = document.getElementById("traceBtn");
-const downloadSvgBtn = document.getElementById("downloadSvgBtn");
 const downloadDxfBtn = document.getElementById("downloadDxfBtn");
 const clearBtn = document.getElementById("clearBtn");
 const statusBox = document.getElementById("status");
 
 const previewCanvas = document.getElementById("previewCanvas");
-const ctx = previewCanvas.getContext("2d");
-const svgPreview = document.getElementById("svgPreview");
+const previewCtx = previewCanvas.getContext("2d");
+
+const dxfPreviewCanvas = document.getElementById("dxfPreviewCanvas");
+const dxfCtx = dxfPreviewCanvas.getContext("2d");
 
 let originalImage = null;
 let originalImageData = null;
 let processedImageData = null;
 let tracedSvgString = "";
+let currentDxfPolylines = [];
 
 function setStatus(message) {
   statusBox.textContent = message;
@@ -46,15 +48,26 @@ function updateValueLabels() {
   pathomitValue.textContent = pathomit.value;
   ltresValue.textContent = ltres.value;
   qtresValue.textContent = qtres.value;
-  if (lightBgThresholdValue) {
-    lightBgThresholdValue.textContent = lightBgThreshold.value;
-  }
+  lightBgThresholdValue.textContent = lightBgThreshold.value;
 }
 
-function setDefaultCanvas() {
-  ctx.clearRect(0, 0, previewCanvas.width, previewCanvas.height);
+function clearCanvas(ctx, canvas) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, previewCanvas.width, previewCanvas.height);
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+}
+
+function setDefaultPreviewCanvas() {
+  clearCanvas(previewCtx, previewCanvas);
+}
+
+function setDefaultDxfCanvas() {
+  clearCanvas(dxfCtx, dxfPreviewCanvas);
+  dxfCtx.fillStyle = "#6b7280";
+  dxfCtx.font = "24px Arial";
+  dxfCtx.textAlign = "center";
+  dxfCtx.textBaseline = "middle";
+  dxfCtx.fillText("No DXF preview yet.", dxfPreviewCanvas.width / 2, dxfPreviewCanvas.height / 2);
 }
 
 function getBaseName(filename) {
@@ -68,7 +81,7 @@ function sanitizeFileName(name) {
   return cleaned || "norrisdxf-output";
 }
 
-function fitImageToCanvas(img, canvas) {
+function fitImageToCanvas(img, canvas, ctx) {
   const cw = canvas.width;
   const ch = canvas.height;
   const scale = Math.min(cw / img.width, ch / img.height);
@@ -77,7 +90,7 @@ function fitImageToCanvas(img, canvas) {
   const x = (cw - drawW) / 2;
   const y = (ch - drawH) / 2;
 
-  setDefaultCanvas();
+  clearCanvas(ctx, canvas);
   ctx.drawImage(img, x, y, drawW, drawH);
 
   return { x, y, drawW, drawH };
@@ -150,7 +163,6 @@ function cropImageDataToVisibleBounds(imageData, alphaCutoff = 10) {
   tempCanvas.width = cropW;
   tempCanvas.height = cropH;
   const tctx = tempCanvas.getContext("2d");
-
   const cropped = tctx.createImageData(cropW, cropH);
 
   for (let y = 0; y < cropH; y++) {
@@ -175,7 +187,7 @@ function drawImageDataToPreview(imageData) {
   const tctx = tempCanvas.getContext("2d");
   tctx.putImageData(imageData, 0, 0);
 
-  setDefaultCanvas();
+  clearCanvas(previewCtx, previewCanvas);
 
   const scale = Math.min(
     previewCanvas.width / imageData.width,
@@ -187,17 +199,17 @@ function drawImageDataToPreview(imageData) {
   const x = (previewCanvas.width - drawW) / 2;
   const y = (previewCanvas.height - drawH) / 2;
 
-  ctx.drawImage(tempCanvas, x, y, drawW, drawH);
+  previewCtx.drawImage(tempCanvas, x, y, drawW, drawH);
 }
 
 function captureOriginalImageData() {
   if (!originalImage) return;
 
-  fitImageToCanvas(originalImage, previewCanvas);
+  fitImageToCanvas(originalImage, previewCanvas, previewCtx);
 
-  let imgData = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+  let imgData = previewCtx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
 
-  if (removeLightBg && removeLightBg.checked) {
+  if (removeLightBg.checked) {
     removeLightBackgroundFromImageData(imgData, Number(lightBgThreshold.value));
   }
 
@@ -209,11 +221,11 @@ function captureOriginalImageData() {
 function applyThresholdPreview() {
   if (!originalImage) return;
 
-  fitImageToCanvas(originalImage, previewCanvas);
+  fitImageToCanvas(originalImage, previewCanvas, previewCtx);
 
-  let imageData = ctx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
+  let imageData = previewCtx.getImageData(0, 0, previewCanvas.width, previewCanvas.height);
 
-  if (removeLightBg && removeLightBg.checked) {
+  if (removeLightBg.checked) {
     removeLightBackgroundFromImageData(imageData, Number(lightBgThreshold.value));
   }
 
@@ -314,7 +326,7 @@ function buildTraceOptions(isColorMode) {
     pathomit: Number(pathomit.value),
     rightangleenhance: true,
     colorsampling: isColorMode ? 2 : 0,
-    numberofcolors: isColorMode ? Math.max(2, Math.min(16, Number(numColors.value) || 6)) : 2,
+    numberofcolors: isColorMode ? Math.max(2, Math.min(16, Number(numColors.value) || 4)) : 2,
     linefilter: true,
     roundcoords: 2,
     strokewidth: 1,
@@ -326,55 +338,6 @@ function buildTraceOptions(isColorMode) {
     blurradius: 0,
     blurdelta: 20
   };
-}
-
-function traceCurrentImage() {
-  if (!originalImage) {
-    setStatus("Load a PNG first.");
-    return;
-  }
-
-  try {
-    const isColorMode = traceMode.value === "color";
-    let sourceImageData;
-
-    if (isColorMode) {
-      captureOriginalImageData();
-      sourceImageData = originalImageData;
-    } else {
-      applyThresholdPreview();
-      sourceImageData = processedImageData;
-    }
-
-    const options = buildTraceOptions(isColorMode);
-    tracedSvgString = ImageTracer.imagedataToSVG(sourceImageData, options);
-
-    svgPreview.classList.remove("empty");
-    svgPreview.innerHTML = tracedSvgString;
-
-    downloadSvgBtn.disabled = false;
-    downloadDxfBtn.disabled = false;
-
-    const pathCount = countSvgPaths(tracedSvgString);
-    setStatus(`Trace complete. ${pathCount} path(s) created using ${isColorMode ? "Color" : "Binary"} Trace.`);
-  } catch (error) {
-    console.error(error);
-    setStatus("Trace failed. Try different settings.");
-  }
-}
-
-function downloadTextFile(content, fileName, mimeType) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-
-  URL.revokeObjectURL(url);
 }
 
 function distance(a, b) {
@@ -600,6 +563,124 @@ function normalizePolylinesForDxf(polylines, vbHeight, scaleFactor) {
   };
 }
 
+function drawDxfPreview(polylines) {
+  clearCanvas(dxfCtx, dxfPreviewCanvas);
+
+  if (!polylines || !polylines.length) {
+    setDefaultDxfCanvas();
+    return;
+  }
+
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const poly of polylines) {
+    for (const pt of poly.points) {
+      if (pt.x < minX) minX = pt.x;
+      if (pt.y < minY) minY = pt.y;
+      if (pt.x > maxX) maxX = pt.x;
+      if (pt.y > maxY) maxY = pt.y;
+    }
+  }
+
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+  const padding = 60;
+
+  const scale = Math.min(
+    (dxfPreviewCanvas.width - padding * 2) / width,
+    (dxfPreviewCanvas.height - padding * 2) / height
+  );
+
+  const offsetX = (dxfPreviewCanvas.width - width * scale) / 2;
+  const offsetY = (dxfPreviewCanvas.height - height * scale) / 2;
+
+  dxfCtx.strokeStyle = "#111827";
+  dxfCtx.lineWidth = 2;
+  dxfCtx.lineJoin = "round";
+  dxfCtx.lineCap = "round";
+
+  for (const poly of polylines) {
+    if (!poly.points || poly.points.length < 2) continue;
+
+    dxfCtx.beginPath();
+
+    poly.points.forEach((pt, index) => {
+      const x = offsetX + (pt.x - minX) * scale;
+      const y = dxfPreviewCanvas.height - (offsetY + (pt.y - minY) * scale);
+
+      if (index === 0) dxfCtx.moveTo(x, y);
+      else dxfCtx.lineTo(x, y);
+    });
+
+    if (poly.closed) dxfCtx.closePath();
+    dxfCtx.stroke();
+  }
+}
+
+function rebuildDxfPreviewFromTrace() {
+  if (!tracedSvgString) return;
+
+  try {
+    const sampled = sampleSvgPaths(tracedSvgString, Number(sampleStep.value));
+
+    const filteredPolys = sampled.polylines.filter((poly) => {
+      const bounds = getPolylineBounds(poly.points);
+      return bounds.width > 1 || bounds.height > 1;
+    });
+
+    const normalized = normalizePolylinesForDxf(
+      filteredPolys,
+      sampled.viewBox.height,
+      Number(exportScale.value)
+    );
+
+    currentDxfPolylines = normalized.polylines;
+    drawDxfPreview(currentDxfPolylines);
+
+    downloadDxfBtn.disabled = false;
+    setStatus(`DXF preview updated. ${currentDxfPolylines.length} clean polylines ready.`);
+  } catch (error) {
+    console.error(error);
+    currentDxfPolylines = [];
+    setDefaultDxfCanvas();
+    setStatus("DXF preview failed. Try Color Trace, lower color count, or raise path omit.");
+  }
+}
+
+function traceCurrentImage() {
+  if (!originalImage) {
+    setStatus("Load a PNG first.");
+    return;
+  }
+
+  try {
+    const isColorMode = traceMode.value === "color";
+    let sourceImageData;
+
+    if (isColorMode) {
+      captureOriginalImageData();
+      sourceImageData = originalImageData;
+    } else {
+      applyThresholdPreview();
+      sourceImageData = processedImageData;
+    }
+
+    const options = buildTraceOptions(isColorMode);
+    tracedSvgString = ImageTracer.imagedataToSVG(sourceImageData, options);
+
+    const pathCount = countSvgPaths(tracedSvgString);
+    setStatus(`Trace complete. ${pathCount} traced path(s) created. Building DXF preview...`);
+
+    rebuildDxfPreviewFromTrace();
+  } catch (error) {
+    console.error(error);
+    setStatus("Trace failed. Try different settings.");
+  }
+}
+
 function formatNumber(n) {
   return Number(n).toFixed(4);
 }
@@ -650,15 +731,18 @@ function buildDxf(polylines) {
   return sections.join("\n");
 }
 
-function exportSvg() {
-  if (!tracedSvgString) {
-    setStatus("No SVG available.");
-    return;
-  }
+function downloadTextFile(content, fileName, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
 
-  const name = sanitizeFileName(exportName.value);
-  downloadTextFile(tracedSvgString, `${name}.svg`, "image/svg+xml");
-  setStatus("SVG downloaded.");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+
+  URL.revokeObjectURL(url);
 }
 
 function exportDxf() {
@@ -695,9 +779,11 @@ function exportDxf() {
     );
 
     const dxf = buildDxf(normalized.polylines);
-
     const name = sanitizeFileName(exportName.value);
     downloadTextFile(dxf, `${name}.dxf`, "application/dxf");
+
+    currentDxfPolylines = normalized.polylines;
+    drawDxfPreview(currentDxfPolylines);
 
     setStatus(`DXF downloaded. ${normalized.polylines.length} clean polylines exported.`);
   } catch (error) {
@@ -711,15 +797,14 @@ function clearAll() {
   originalImageData = null;
   processedImageData = null;
   tracedSvgString = "";
+  currentDxfPolylines = [];
 
   pngFile.value = "";
   exportName.value = "norrisdxf-output";
 
-  setDefaultCanvas();
-  svgPreview.classList.add("empty");
-  svgPreview.textContent = "No trace yet.";
+  setDefaultPreviewCanvas();
+  setDefaultDxfCanvas();
 
-  downloadSvgBtn.disabled = true;
   downloadDxfBtn.disabled = true;
 
   setStatus("Load a PNG to begin.");
@@ -750,12 +835,11 @@ pngFile.addEventListener("change", (event) => {
       refreshPreviewByMode();
 
       tracedSvgString = "";
-      svgPreview.classList.add("empty");
-      svgPreview.textContent = "No trace yet.";
-      downloadSvgBtn.disabled = true;
+      currentDxfPolylines = [];
+      setDefaultDxfCanvas();
       downloadDxfBtn.disabled = true;
 
-      setStatus(`Loaded ${file.name}. Use Color Trace and light background removal for logos like Jurassic Park.`);
+      setStatus(`Loaded ${file.name}. Click Trace PNG to build the DXF preview.`);
     };
     img.src = e.target.result;
   };
@@ -772,38 +856,54 @@ pngFile.addEventListener("change", (event) => {
   qtres,
   lightBgThreshold
 ].forEach((el) => {
-  if (!el) return;
-
   el.addEventListener("input", () => {
     updateValueLabels();
+
     if (originalImage) {
       if (traceMode.value === "binary") {
         applyThresholdPreview();
       } else {
         captureOriginalImageData();
       }
+    }
+
+    if (tracedSvgString) {
+      rebuildDxfPreviewFromTrace();
     }
   });
 });
 
-if (removeLightBg) {
-  removeLightBg.addEventListener("change", () => {
-    if (originalImage) {
-      if (traceMode.value === "binary") {
-        applyThresholdPreview();
-      } else {
-        captureOriginalImageData();
-      }
+removeLightBg.addEventListener("change", () => {
+  if (originalImage) {
+    if (traceMode.value === "binary") {
+      applyThresholdPreview();
+    } else {
+      captureOriginalImageData();
     }
-  });
-}
+  }
+
+  if (tracedSvgString) {
+    rebuildDxfPreviewFromTrace();
+  }
+});
 
 traceMode.addEventListener("change", () => {
   refreshPreviewByMode();
 });
 
+numColors.addEventListener("input", () => {
+  if (tracedSvgString) rebuildDxfPreviewFromTrace();
+});
+
+sampleStep.addEventListener("input", () => {
+  if (tracedSvgString) rebuildDxfPreviewFromTrace();
+});
+
+exportScale.addEventListener("input", () => {
+  if (tracedSvgString) rebuildDxfPreviewFromTrace();
+});
+
 traceBtn.addEventListener("click", traceCurrentImage);
-downloadSvgBtn.addEventListener("click", exportSvg);
 downloadDxfBtn.addEventListener("click", exportDxf);
 clearBtn.addEventListener("click", clearAll);
 
