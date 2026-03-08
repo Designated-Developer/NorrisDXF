@@ -233,30 +233,6 @@ canvas {
   display: block;
 }
 
-.svg-preview {
-  min-height: 600px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: white;
-  border: 1px solid #d9dfe9;
-  border-radius: 12px;
-  padding: 14px;
-  overflow: auto;
-  color: #111827;
-}
-
-.svg-preview.empty {
-  color: #6b7280;
-  font-size: 15px;
-}
-
-.svg-preview svg {
-  max-width: 100%;
-  max-height: 580px;
-  display: block;
-}
-
 .notes {
   padding: 18px;
 }
@@ -278,9 +254,5 @@ canvas {
 
   .preview-grid {
     grid-template-columns: 1fr;
-  }
-
-  .svg-preview {
-    min-height: 420px;
   }
 }
