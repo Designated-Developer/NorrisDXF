@@ -266,9 +266,48 @@ function dedupePoints(points, tolerance = 0.01) {
   return clean;
 }
 
-function pathIsClosed(pathEl) {
-  const d = pathEl.getAttribute("d") || "";
-  return /z\s*$/i.test(d.trim());
+function getPolylineBounds(points) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  for (const p of points) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+
+  return {
+    minX,
+    minY,
+    maxX,
+    maxY,
+    width: maxX - minX,
+    height: maxY - minY
+  };
+}
+
+function shouldKeepPolyline(points, minLength = 2, minSize = 1) {
+  if (!points || points.length < 2) return false;
+
+  const bounds = getPolylineBounds(points);
+  const widthOk = bounds.width >= minSize;
+  const heightOk = bounds.height >= minSize;
+
+  let totalLen = 0;
+  for (let i = 1; i < points.length; i++) {
+    totalLen += distance(points[i], points[i - 1]);
+  }
+
+  return totalLen >= minLength && (widthOk || heightOk);
+}
+
+function splitPathDataIntoSubpaths(d) {
+  if (!d || !d.trim()) return [];
+  const matches = d.match(/[Mm][^Mm]*/g);
+  return matches ? matches.map(s => s.trim()).filter(Boolean) : [d.trim()];
 }
 
 function sampleSvgPaths(svgString, pxStep = 3) {
@@ -280,7 +319,11 @@ function sampleSvgPaths(svgString, pxStep = 3) {
     throw new Error("No SVG found.");
   }
 
-  const viewBox = (svgEl.getAttribute("viewBox") || "").trim().split(/\s+/).map(Number);
+  const viewBox = (svgEl.getAttribute("viewBox") || "")
+    .trim()
+    .split(/\s+/)
+    .map(Number);
+
   let vbX = 0;
   let vbY = 0;
   let vbW = 1000;
@@ -296,6 +339,8 @@ function sampleSvgPaths(svgString, pxStep = 3) {
   hiddenWrap.style.top = "-99999px";
   hiddenWrap.style.width = "0";
   hiddenWrap.style.height = "0";
+  hiddenWrap.style.opacity = "0";
+  hiddenWrap.style.pointerEvents = "none";
   hiddenWrap.innerHTML = svgString;
   document.body.appendChild(hiddenWrap);
 
@@ -307,41 +352,60 @@ function sampleSvgPaths(svgString, pxStep = 3) {
     throw new Error("No SVG paths found.");
   }
 
+  const svgNS = "http://www.w3.org/2000/svg";
   const polylines = [];
 
   for (const pathEl of pathEls) {
-    let totalLength = 0;
+    const d = pathEl.getAttribute("d");
+    if (!d || !d.trim()) continue;
 
-    try {
-      totalLength = pathEl.getTotalLength();
-    } catch (err) {
-      continue;
-    }
+    const subpaths = splitPathDataIntoSubpaths(d);
 
-    if (!Number.isFinite(totalLength) || totalLength <= 0) continue;
+    for (const subD of subpaths) {
+      const tempPath = document.createElementNS(svgNS, "path");
+      tempPath.setAttribute("d", subD);
+      liveSvg.appendChild(tempPath);
 
-    const step = Math.max(0.5, pxStep);
-    const divisions = Math.max(8, Math.ceil(totalLength / step));
-    const pts = [];
-
-    for (let i = 0; i <= divisions; i++) {
-      const len = (i / divisions) * totalLength;
-      const p = pathEl.getPointAtLength(len);
-      pts.push({ x: p.x, y: p.y });
-    }
-
-    let cleanPts = dedupePoints(pts, 0.05);
-
-    const closed = pathIsClosed(pathEl);
-    if (closed && cleanPts.length > 2) {
-      const first = cleanPts[0];
-      const last = cleanPts[cleanPts.length - 1];
-      if (distance(first, last) > 0.1) {
-        cleanPts.push({ x: first.x, y: first.y });
+      let totalLength = 0;
+      try {
+        totalLength = tempPath.getTotalLength();
+      } catch (err) {
+        tempPath.remove();
+        continue;
       }
-    }
 
-    if (cleanPts.length >= 2) {
+      if (!Number.isFinite(totalLength) || totalLength <= 0) {
+        tempPath.remove();
+        continue;
+      }
+
+      const step = Math.max(0.5, pxStep);
+      const divisions = Math.max(8, Math.ceil(totalLength / step));
+      const pts = [];
+
+      for (let i = 0; i <= divisions; i++) {
+        const len = (i / divisions) * totalLength;
+        const p = tempPath.getPointAtLength(len);
+        pts.push({ x: p.x, y: p.y });
+      }
+
+      tempPath.remove();
+
+      let cleanPts = dedupePoints(pts, 0.05);
+      const closed = /z\s*$/i.test(subD.trim());
+
+      if (closed && cleanPts.length > 2) {
+        const first = cleanPts[0];
+        const last = cleanPts[cleanPts.length - 1];
+        if (distance(first, last) > 0.1) {
+          cleanPts.push({ x: first.x, y: first.y });
+        }
+      }
+
+      if (!shouldKeepPolyline(cleanPts, 2, 1)) {
+        continue;
+      }
+
       polylines.push({
         closed,
         points: cleanPts
@@ -488,16 +552,27 @@ function exportDxf() {
 
   try {
     const sampled = sampleSvgPaths(tracedSvgString, step);
-    const normalized = normalizePolylinesForDxf(sampled.polylines, sampled.viewBox.height, scaleFactor);
+
+    const filteredPolys = sampled.polylines.filter(poly => {
+      const bounds = getPolylineBounds(poly.points);
+      return bounds.width > 1 || bounds.height > 1;
+    });
+
+    const normalized = normalizePolylinesForDxf(
+      filteredPolys,
+      sampled.viewBox.height,
+      scaleFactor
+    );
+
     const dxf = buildDxf(normalized.polylines);
 
     const name = sanitizeFileName(exportName.value);
     downloadTextFile(dxf, `${name}.dxf`, "application/dxf");
 
-    setStatus(`DXF downloaded. ${normalized.polylines.length} polylines exported.`);
+    setStatus(`DXF downloaded. ${normalized.polylines.length} clean polylines exported.`);
   } catch (error) {
     console.error(error);
-    setStatus("DXF export failed. Try Color Trace, reduce sample step, or simplify the trace.");
+    setStatus("DXF export failed. Try Color Trace, lower color count, or raise path omit.");
   }
 }
 
@@ -522,6 +597,7 @@ function clearAll() {
 
 function refreshPreviewByMode() {
   if (!originalImage) return;
+
   if (traceMode.value === "binary") {
     applyThresholdPreview();
   } else {
