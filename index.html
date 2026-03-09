@@ -1,378 +1,204 @@
-:root {
-  --bg: #07101f;
-  --bg-2: #0b1730;
-  --panel: rgba(14, 24, 53, 0.96);
-  --panel-2: #152447;
-  --line: #263a68;
-  --text: #f4f7ff;
-  --muted: #a9b7d8;
-  --accent: #58d68d;
-  --danger: #ef5350;
-  --shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
-  --radius: 18px;
-}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NorrisDXF</title>
+  <meta name="description" content="Convert PNG artwork into DXF files with live DXF preview." />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/imagetracerjs@1.2.6/imagetracer_v1.2.6.min.js"></script>
+</head>
+<body>
+  <div id="loadingOverlay" class="loading-overlay hidden">
+    <div class="loading-card">
+      <div class="spinner"></div>
+      <div class="loading-title">Processing image…</div>
+      <div class="loading-subtitle" id="loadingText">Cleaning artwork and building DXF preview.</div>
+    </div>
+  </div>
 
-* {
-  box-sizing: border-box;
-}
+  <header class="topbar">
+    <div class="brand">
+      <h1>NorrisDXF</h1>
+      <p>PNG to DXF with live DXF preview</p>
+    </div>
+  </header>
 
-html,
-body {
-  margin: 0;
-  padding: 0;
-}
+  <main class="app-shell">
+    <aside class="sidebar card">
+      <section class="section">
+        <h2>Import</h2>
+        <label class="label" for="pngFile">PNG file</label>
+        <input id="pngFile" type="file" accept=".png,image/png,image/*" />
+        <p class="helper">Best for logos, silhouettes, and clean artwork.</p>
+      </section>
 
-body {
-  min-height: 100vh;
-  color: var(--text);
-  font-family: Arial, Helvetica, sans-serif;
-  background:
-    radial-gradient(circle at top left, rgba(24, 74, 160, 0.18), transparent 28%),
-    linear-gradient(180deg, #030917 0%, #071327 100%);
-}
+      <section class="section">
+        <h2>Trace Mode</h2>
 
-.topbar {
-  padding: 18px 22px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(6px);
-}
+        <label class="label" for="traceMode">Mode</label>
+        <select id="traceMode">
+          <option value="auto" selected>Auto</option>
+          <option value="logo">Logo Mode</option>
+          <option value="binary">Binary Trace</option>
+          <option value="color">Color Trace</option>
+        </select>
 
-.brand {
-  max-width: 1400px;
-  margin: 0 auto;
-}
+        <label class="label" for="numColors">Number of colors</label>
+        <input id="numColors" type="number" min="2" max="16" step="1" value="4" />
 
-.brand h1 {
-  margin: 0;
-  font-size: 28px;
-  line-height: 1;
-}
+        <label class="checkline">
+          <input id="detectInteriorHoles" type="checkbox" checked />
+          <span>Detect interior holes</span>
+        </label>
 
-.brand p {
-  margin: 8px 0 0;
-  color: var(--muted);
-}
+        <p class="helper">
+          Use Logo Mode for sports logos, stencils, and marks with interior cutouts like letters.
+        </p>
+      </section>
 
-.app-shell {
-  max-width: 1400px;
-  margin: 0 auto;
-  padding: 18px;
-  display: grid;
-  grid-template-columns: 340px 1fr;
-  gap: 18px;
-}
+      <section class="section">
+        <h2>Background Cleanup</h2>
 
-.card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-}
+        <label class="checkline">
+          <input id="removeLightBg" type="checkbox" checked />
+          <span>Remove light background</span>
+        </label>
 
-.sidebar {
-  padding: 18px;
-  position: sticky;
-  top: 16px;
-  align-self: start;
-}
+        <label class="label" for="lightBgThreshold">Light background threshold</label>
+        <div class="range-row">
+          <input id="lightBgThreshold" type="range" min="180" max="255" value="225" />
+          <span id="lightBgThresholdValue">225</span>
+        </div>
 
-.section + .section {
-  margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px solid var(--line);
-}
+        <label class="checkline">
+          <input id="removeSmallJunk" type="checkbox" checked />
+          <span>Remove small junk / copyright marks</span>
+        </label>
 
-.section h2,
-.panel-header h2,
-.notes h2,
-.action-panel-header h2 {
-  margin: 0 0 12px;
-  font-size: 18px;
-}
+        <p class="helper">
+          Useful for checkerboard previews, fake transparency, and tiny raster junk.
+        </p>
+      </section>
 
-.label {
-  display: block;
-  margin: 0 0 6px;
-  color: var(--muted);
-  font-size: 14px;
-}
+      <section class="section">
+        <h2>Binary Cleanup</h2>
 
-.helper {
-  margin: 10px 0 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
+        <label class="label" for="threshold">Threshold</label>
+        <div class="range-row">
+          <input id="threshold" type="range" min="0" max="255" value="145" />
+          <span id="thresholdValue">145</span>
+        </div>
 
-input[type="file"],
-input[type="number"],
-input[type="text"],
-select {
-  width: 100%;
-  background: #071226;
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 11px 13px;
-  font-size: 14px;
-  outline: none;
-}
+        <label class="checkline">
+          <input id="invert" type="checkbox" />
+          <span>Invert black / white</span>
+        </label>
 
-input[type="range"] {
-  width: 100%;
-}
+        <label class="checkline">
+          <input id="despeckle" type="checkbox" checked />
+          <span>Remove tiny specks</span>
+        </label>
+      </section>
 
-.range-row {
-  display: grid;
-  grid-template-columns: 1fr 52px;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 14px;
-}
+      <section class="section">
+        <h2>Trace Settings</h2>
 
-.range-row span {
-  text-align: right;
-  color: var(--muted);
-  font-size: 13px;
-}
+        <label class="label" for="pathomit">Path omit</label>
+        <div class="range-row">
+          <input id="pathomit" type="range" min="0" max="40" value="10" />
+          <span id="pathomitValue">10</span>
+        </div>
 
-.checkline {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 10px 0 0;
-  color: var(--text);
-  font-size: 14px;
-}
+        <label class="label" for="ltres">Line threshold</label>
+        <div class="range-row">
+          <input id="ltres" type="range" min="0.1" max="10" step="0.1" value="2" />
+          <span id="ltresValue">2</span>
+        </div>
 
-.button-stack {
-  display: grid;
-  gap: 10px;
-  margin-top: 14px;
-}
+        <label class="label" for="qtres">Curve threshold</label>
+        <div class="range-row">
+          <input id="qtres" type="range" min="0.1" max="10" step="0.1" value="2" />
+          <span id="qtresValue">2</span>
+        </div>
 
-.btn {
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  color: var(--text);
-  border-radius: 12px;
-  padding: 12px 14px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: transform 0.14s ease, opacity 0.14s ease, background 0.14s ease;
-}
+        <label class="checkline">
+          <input id="preferLogoShapes" type="checkbox" checked />
+          <span>Prefer logo shapes over tiny detail</span>
+        </label>
+      </section>
 
-.btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
+      <section class="section">
+        <h2>Status</h2>
+        <div id="status" class="status">Load a PNG to begin.</div>
+      </section>
+    </aside>
 
-.btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
+    <section class="workspace">
+      <div class="preview-grid">
+        <div class="card panel">
+          <div class="panel-header">
+            <h2>Image Preview</h2>
+            <p>Original, cleaned, or thresholded preview</p>
+          </div>
+          <div class="panel-body canvas-body">
+            <canvas id="previewCanvas" width="1000" height="1000"></canvas>
+          </div>
+        </div>
 
-.btn-primary {
-  background: linear-gradient(180deg, #61e29a 0%, #3fc978 100%);
-  color: #072312;
-  border-color: transparent;
-}
+        <div class="card panel">
+          <div class="panel-header">
+            <h2>DXF Preview</h2>
+            <p>The actual polyline geometry that will be exported</p>
+          </div>
+          <div class="panel-body canvas-body">
+            <canvas id="dxfPreviewCanvas" width="1000" height="1000"></canvas>
+          </div>
+        </div>
+      </div>
 
-.btn-danger {
-  background: linear-gradient(180deg, #ef6b68 0%, #dc4744 100%);
-  color: white;
-  border-color: transparent;
-}
+      <div class="card action-panel">
+        <div class="action-panel-header">
+          <h2>DXF Output</h2>
+          <p>Preview first, then trace and export.</p>
+        </div>
 
-.status {
-  min-height: 50px;
-  background: #071226;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 12px 14px;
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.45;
-}
+        <div class="action-panel-body">
+          <div class="action-fields">
+            <div class="action-field">
+              <label class="label" for="sampleStep">Polyline sample step (px)</label>
+              <input id="sampleStep" type="number" min="0.5" max="20" step="0.5" value="2.5" />
+            </div>
 
-.workspace {
-  display: grid;
-  gap: 18px;
-}
+            <div class="action-field">
+              <label class="label" for="exportScale">DXF scale</label>
+              <input id="exportScale" type="number" min="0.001" step="0.001" value="1" />
+            </div>
 
-.preview-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px;
-}
+            <div class="action-field action-field-wide">
+              <label class="label" for="exportName">File name</label>
+              <input id="exportName" type="text" value="norrisdxf-output" />
+            </div>
+          </div>
 
-.panel {
-  overflow: hidden;
-}
+          <div class="action-buttons">
+            <button id="traceBtn" class="btn btn-primary">Auto Trace PNG</button>
+            <button id="downloadDxfBtn" class="btn" disabled>Download DXF</button>
+            <button id="clearBtn" class="btn btn-danger">Clear</button>
+          </div>
+        </div>
+      </div>
 
-.panel-header {
-  padding: 16px 18px 10px;
-  border-bottom: 1px solid var(--line);
-}
+      <div class="card notes">
+        <h2>Reality check</h2>
+        <p>
+          This is tuned for usable CNC-style DXF output, not perfect art reproduction.
+          It is biased toward clean closed contours and preserving interior cutouts for logos.
+        </p>
+      </div>
+    </section>
+  </main>
 
-.panel-header p {
-  margin: 6px 0 0;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.panel-body {
-  padding: 14px;
-}
-
-.canvas-body {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-canvas {
-  width: 100%;
-  height: auto;
-  background: #f3f4f6;
-  border: 1px solid #d8dde7;
-  border-radius: 14px;
-  display: block;
-}
-
-.action-panel {
-  overflow: hidden;
-}
-
-.action-panel-header {
-  padding: 16px 18px 10px;
-  border-bottom: 1px solid var(--line);
-}
-
-.action-panel-header p {
-  margin: 6px 0 0;
-  color: var(--muted);
-  font-size: 14px;
-}
-
-.action-panel-body {
-  padding: 16px 18px 18px;
-  display: grid;
-  gap: 16px;
-}
-
-.action-fields {
-  display: grid;
-  grid-template-columns: 1fr 1fr 1.2fr;
-  gap: 14px;
-  align-items: end;
-}
-
-.action-field {
-  min-width: 0;
-}
-
-.action-field-wide {
-  min-width: 0;
-}
-
-.action-buttons {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-
-.action-buttons .btn {
-  min-width: 180px;
-}
-
-.notes {
-  padding: 18px;
-}
-
-.notes p {
-  margin: 0;
-  color: var(--muted);
-  line-height: 1.6;
-}
-
-.loading-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(3, 9, 23, 0.72);
-  backdrop-filter: blur(8px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 9999;
-}
-
-.loading-overlay.hidden {
-  display: none;
-}
-
-.loading-card {
-  width: min(360px, calc(100vw - 32px));
-  background: rgba(17, 28, 58, 0.96);
-  border: 1px solid var(--line);
-  border-radius: 20px;
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
-  padding: 28px 24px;
-  text-align: center;
-}
-
-.spinner {
-  width: 68px;
-  height: 68px;
-  margin: 0 auto 18px;
-  border-radius: 50%;
-  border: 6px solid rgba(255, 255, 255, 0.12);
-  border-top-color: #58d68d;
-  border-right-color: #61a8ff;
-  animation: spin 0.85s linear infinite;
-  box-shadow: 0 0 30px rgba(88, 214, 141, 0.14);
-}
-
-.loading-title {
-  font-size: 20px;
-  font-weight: 700;
-  margin-bottom: 8px;
-}
-
-.loading-subtitle {
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (max-width: 1100px) {
-  .app-shell {
-    grid-template-columns: 1fr;
-  }
-
-  .sidebar {
-    position: static;
-  }
-
-  .preview-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .action-fields {
-    grid-template-columns: 1fr;
-  }
-
-  .action-buttons {
-    flex-direction: column;
-  }
-
-  .action-buttons .btn {
-    width: 100%;
-    min-width: 0;
-  }
-}
+  <script src="app.js"></script>
+</body>
+</html>
