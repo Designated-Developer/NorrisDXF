@@ -30,9 +30,7 @@
         <h2>Import</h2>
         <label class="label" for="pngFile">PNG file</label>
         <input id="pngFile" type="file" accept=".png,image/png,image/*" />
-        <p class="helper">
-          Best for logos, silhouettes, and clean artwork.
-        </p>
+        <p class="helper">Best for logos, silhouettes, and clean artwork.</p>
       </section>
 
       <section class="section">
@@ -41,15 +39,21 @@
         <label class="label" for="traceMode">Mode</label>
         <select id="traceMode">
           <option value="auto" selected>Auto</option>
-          <option value="color">Color Trace</option>
+          <option value="logo">Logo Mode</option>
           <option value="binary">Binary Trace</option>
+          <option value="color">Color Trace</option>
         </select>
 
         <label class="label" for="numColors">Number of colors</label>
         <input id="numColors" type="number" min="2" max="16" step="1" value="4" />
 
+        <label class="checkline">
+          <input id="detectInteriorHoles" type="checkbox" checked />
+          <span>Detect interior holes</span>
+        </label>
+
         <p class="helper">
-          Auto mode will try multiple presets and pick the best result.
+          Use Logo Mode for sports logos, stencils, and marks with interior cutouts like letters.
         </p>
       </section>
 
@@ -82,8 +86,8 @@
 
         <label class="label" for="threshold">Threshold</label>
         <div class="range-row">
-          <input id="threshold" type="range" min="0" max="255" value="140" />
-          <span id="thresholdValue">140</span>
+          <input id="threshold" type="range" min="0" max="255" value="145" />
+          <span id="thresholdValue">145</span>
         </div>
 
         <label class="checkline">
@@ -102,8 +106,8 @@
 
         <label class="label" for="pathomit">Path omit</label>
         <div class="range-row">
-          <input id="pathomit" type="range" min="0" max="40" value="12" />
-          <span id="pathomitValue">12</span>
+          <input id="pathomit" type="range" min="0" max="40" value="10" />
+          <span id="pathomitValue">10</span>
         </div>
 
         <label class="label" for="ltres">Line threshold</label>
@@ -128,7 +132,7 @@
         <h2>DXF Output</h2>
 
         <label class="label" for="sampleStep">Polyline sample step (px)</label>
-        <input id="sampleStep" type="number" min="0.5" max="20" step="0.5" value="3" />
+        <input id="sampleStep" type="number" min="0.5" max="20" step="0.5" value="2.5" />
 
         <label class="label" for="exportScale">DXF scale</label>
         <input id="exportScale" type="number" min="0.001" step="0.001" value="1" />
@@ -176,7 +180,7 @@
         <h2>Reality check</h2>
         <p>
           This is tuned for usable CNC-style DXF output, not perfect art reproduction.
-          That means it intentionally prefers cleaner shapes over preserving every tiny raster detail.
+          It is biased toward clean closed contours and preserving interior cutouts for logos.
         </p>
       </div>
     </section>
