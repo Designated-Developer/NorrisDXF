@@ -12,6 +12,7 @@ const qtres = document.getElementById("qtres");
 const removeLightBg = document.getElementById("removeLightBg");
 const removeSmallJunk = document.getElementById("removeSmallJunk");
 const preferLogoShapes = document.getElementById("preferLogoShapes");
+const detectInteriorHoles = document.getElementById("detectInteriorHoles");
 const lightBgThreshold = document.getElementById("lightBgThreshold");
 
 const sampleStep = document.getElementById("sampleStep");
@@ -278,7 +279,7 @@ function showCurrentImagePreview() {
 
   const base = buildBaseImageData();
 
-  if (traceMode.value === "binary") {
+  if (traceMode.value === "binary" || traceMode.value === "logo") {
     const binary = buildBinaryImageData(
       base,
       Number(threshold.value),
@@ -397,6 +398,52 @@ function getAllPolylinesBounds(polylines) {
     width: maxX - minX,
     height: maxY - minY
   };
+}
+
+function polylineArea(points) {
+  let area = 0;
+  const n = points.length;
+  if (n < 3) return 0;
+
+  for (let i = 0; i < n; i++) {
+    const p1 = points[i];
+    const p2 = points[(i + 1) % n];
+    area += (p1.x * p2.y) - (p2.x * p1.y);
+  }
+  return Math.abs(area / 2);
+}
+
+function polygonCentroid(points) {
+  const n = points.length;
+  if (!n) return { x: 0, y: 0 };
+  let x = 0;
+  let y = 0;
+
+  for (const p of points) {
+    x += p.x;
+    y += p.y;
+  }
+
+  return { x: x / n, y: y / n };
+}
+
+function pointInPolygon(point, polygon) {
+  let inside = false;
+
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x;
+    const yi = polygon[i].y;
+    const xj = polygon[j].x;
+    const yj = polygon[j].y;
+
+    const intersect =
+      ((yi > point.y) !== (yj > point.y)) &&
+      (point.x < ((xj - xi) * (point.y - yi)) / ((yj - yi) || 1e-9) + xi);
+
+    if (intersect) inside = !inside;
+  }
+
+  return inside;
 }
 
 function polylineMatchesOuterBounds(poly, allBounds, tolerance = 2) {
@@ -568,17 +615,56 @@ function sampleSvgPaths(svgString, pxStep = 3) {
   };
 }
 
+function annotateNesting(polylines) {
+  const annotated = polylines.map((poly, index) => ({
+    ...poly,
+    _index: index,
+    _bounds: getPolylineBounds(poly.points),
+    _area: polylineArea(poly.points),
+    _centroid: polygonCentroid(poly.points),
+    _parentCount: 0,
+    _isNested: false
+  }));
+
+  if (!detectInteriorHoles.checked) return annotated;
+
+  for (let i = 0; i < annotated.length; i++) {
+    for (let j = 0; j < annotated.length; j++) {
+      if (i === j) continue;
+
+      const a = annotated[i];
+      const b = annotated[j];
+
+      if (!b.closed || !a.closed) continue;
+      if (b._area <= a._area) continue;
+
+      const inside = pointInPolygon(a._centroid, b.points);
+      if (inside) {
+        a._parentCount += 1;
+      }
+    }
+  }
+
+  for (const poly of annotated) {
+    poly._isNested = poly._parentCount > 0;
+  }
+
+  return annotated;
+}
+
 function removeTinyJunkPolylines(polylines) {
   if (!removeSmallJunk.checked || !polylines.length) return polylines;
 
   const allBounds = getAllPolylinesBounds(polylines);
-  const minW = Math.max(3, allBounds.width * 0.012);
-  const minH = Math.max(3, allBounds.height * 0.012);
-  const minArea = Math.max(18, (allBounds.width * allBounds.height) * 0.00008);
+  const minW = Math.max(2.2, allBounds.width * 0.008);
+  const minH = Math.max(2.2, allBounds.height * 0.008);
+  const minArea = Math.max(10, (allBounds.width * allBounds.height) * 0.00004);
 
   return polylines.filter(poly => {
-    const b = getPolylineBounds(poly.points);
-    const area = b.width * b.height;
+    if (poly._isNested) return true;
+
+    const b = poly._bounds || getPolylineBounds(poly.points);
+    const area = poly._area || (b.width * b.height);
 
     const tinyBox = b.width < minW && b.height < minH;
     const tinyArea = area < minArea;
@@ -595,7 +681,9 @@ function removeLikelyCornerCopyright(polylines) {
   const bottomZone = allBounds.minY + allBounds.height * 0.82;
 
   return polylines.filter(poly => {
-    const b = getPolylineBounds(poly.points);
+    if (poly._isNested) return true;
+
+    const b = poly._bounds || getPolylineBounds(poly.points);
     const small = b.width < allBounds.width * 0.14 && b.height < allBounds.height * 0.08;
     const inCorner = b.minX >= rightZone && b.minY >= bottomZone;
     return !(small && inCorner);
@@ -603,19 +691,22 @@ function removeLikelyCornerCopyright(polylines) {
 }
 
 function keepLargestMeaningfulShapes(polylines) {
-  if (!preferLogoShapes.checked || polylines.length < 8) return polylines;
+  if (!preferLogoShapes.checked || polylines.length < 10) return polylines;
+
+  const nestedCount = polylines.filter(p => p._isNested).length;
+  if (nestedCount > 0) return polylines;
 
   const ranked = polylines.map(poly => {
-    const b = getPolylineBounds(poly.points);
+    const b = poly._bounds || getPolylineBounds(poly.points);
     return {
       poly,
-      score: (b.width * b.height) + poly.points.length * 0.6
+      score: (b.width * b.height) + poly.points.length * 0.7
     };
   });
 
   ranked.sort((a, b) => b.score - a.score);
 
-  const keepCount = Math.min(Math.max(6, Math.floor(ranked.length * 0.7)), ranked.length);
+  const keepCount = Math.min(Math.max(8, Math.floor(ranked.length * 0.78)), ranked.length);
   const kept = ranked.slice(0, keepCount).map(item => item.poly);
 
   return kept.length ? kept : polylines;
@@ -624,10 +715,12 @@ function keepLargestMeaningfulShapes(polylines) {
 function cleanupPolylines(polylines) {
   let out = polylines.slice();
   out = removeOuterBorderPolyline(out);
+  out = annotateNesting(out);
   out = removeTinyJunkPolylines(out);
   out = removeLikelyCornerCopyright(out);
   out = keepLargestMeaningfulShapes(out);
-  return out;
+
+  return out.map(({ _index, _bounds, _area, _centroid, _parentCount, _isNested, ...rest }) => rest);
 }
 
 function normalizePolylinesForDxf(polylines, vbHeight, scaleFactor) {
@@ -710,7 +803,7 @@ function drawDxfPreview(polylines) {
   const offsetY = (dxfPreviewCanvas.height - height * scale) / 2;
 
   dxfCtx.strokeStyle = "#111827";
-  dxfCtx.lineWidth = 2;
+  dxfCtx.lineWidth = 1.8;
   dxfCtx.lineJoin = "round";
   dxfCtx.lineCap = "round";
 
@@ -740,7 +833,7 @@ function makeTraceOptions(preset) {
     rightangleenhance: true,
     colorsampling: preset.mode === "color" ? 2 : 0,
     numberofcolors: preset.mode === "color" ? preset.colors : 2,
-    linefilter: true,
+    linefilter: false,
     roundcoords: 2,
     strokewidth: 1,
     viewbox: true,
@@ -782,14 +875,14 @@ function scoreTraceResult(normalizedPolylines) {
 
   let score = 0;
   score += Math.min(area / 500, 300);
-  score += Math.min(closedCount * 8, 120);
+  score += Math.min(closedCount * 10, 160);
 
-  if (polyCount >= 2 && polyCount <= 60) score += 120;
-  else if (polyCount <= 120) score += 50;
-  else score -= Math.min(polyCount, 300);
+  if (polyCount >= 2 && polyCount <= 80) score += 120;
+  else if (polyCount <= 150) score += 40;
+  else score -= Math.min(polyCount, 280);
 
-  if (totalPoints < 7000) score += 90;
-  else score -= Math.min((totalPoints - 7000) / 18, 320);
+  if (totalPoints < 9000) score += 100;
+  else score -= Math.min((totalPoints - 9000) / 20, 320);
 
   if (width > 40 && height > 40) score += 80;
   if (width < 10 || height < 10) score -= 120;
@@ -798,20 +891,28 @@ function scoreTraceResult(normalizedPolylines) {
 }
 
 function buildAutoPresets() {
-  const step = Number(sampleStep.value) || 3;
+  const step = Number(sampleStep.value) || 2.5;
+
+  if (traceMode.value === "logo") {
+    return [
+      { label: "Logo Binary 145 / omit 8", mode: "binary", threshold: 145, invert: false, despeckle: true, pathomit: 8, ltres: 1.6, qtres: 1.6, sampleStep: step },
+      { label: "Logo Binary 155 / omit 10", mode: "binary", threshold: 155, invert: false, despeckle: true, pathomit: 10, ltres: 1.8, qtres: 1.8, sampleStep: step },
+      { label: "Logo Binary 135 / omit 6", mode: "binary", threshold: 135, invert: false, despeckle: true, pathomit: 6, ltres: 1.5, qtres: 1.5, sampleStep: step }
+    ];
+  }
 
   return [
-    { label: "Color 4 / omit 14", mode: "color", colors: 4, pathomit: 14, ltres: 2.2, qtres: 2.2, sampleStep: step },
-    { label: "Color 3 / omit 16", mode: "color", colors: 3, pathomit: 16, ltres: 2.5, qtres: 2.5, sampleStep: step },
-    { label: "Color 5 / omit 12", mode: "color", colors: 5, pathomit: 12, ltres: 2.0, qtres: 2.0, sampleStep: step },
-    { label: "Binary 150 / omit 14", mode: "binary", threshold: 150, invert: false, despeckle: true, pathomit: 14, ltres: 2.4, qtres: 2.4, sampleStep: step },
-    { label: "Binary 135 / omit 12", mode: "binary", threshold: 135, invert: false, despeckle: true, pathomit: 12, ltres: 2.1, qtres: 2.1, sampleStep: step },
-    { label: "Binary 165 / omit 16", mode: "binary", threshold: 165, invert: false, despeckle: true, pathomit: 16, ltres: 2.8, qtres: 2.8, sampleStep: step }
+    { label: "Color 4 / omit 12", mode: "color", colors: 4, pathomit: 12, ltres: 2.0, qtres: 2.0, sampleStep: step },
+    { label: "Color 3 / omit 14", mode: "color", colors: 3, pathomit: 14, ltres: 2.2, qtres: 2.2, sampleStep: step },
+    { label: "Binary 145 / omit 10", mode: "binary", threshold: 145, invert: false, despeckle: true, pathomit: 10, ltres: 1.8, qtres: 1.8, sampleStep: step },
+    { label: "Binary 155 / omit 12", mode: "binary", threshold: 155, invert: false, despeckle: true, pathomit: 12, ltres: 2.1, qtres: 2.1, sampleStep: step },
+    { label: "Logo Binary 135 / omit 8", mode: "binary", threshold: 135, invert: false, despeckle: true, pathomit: 8, ltres: 1.6, qtres: 1.6, sampleStep: step }
   ];
 }
 
 function buildManualPreset() {
-  const mode = traceMode.value === "auto" ? "color" : traceMode.value;
+  const mode = traceMode.value === "auto" || traceMode.value === "logo" ? "binary" : traceMode.value;
+
   return {
     label: "Manual",
     mode,
@@ -822,7 +923,7 @@ function buildManualPreset() {
     pathomit: Number(pathomit.value),
     ltres: Number(ltres.value),
     qtres: Number(qtres.value),
-    sampleStep: Number(sampleStep.value) || 3
+    sampleStep: Number(sampleStep.value) || 2.5
   };
 }
 
@@ -883,7 +984,7 @@ async function autoTraceImage() {
     drawImageDataToPreview(baseImageData);
 
     const presets =
-      traceMode.value === "auto"
+      traceMode.value === "auto" || traceMode.value === "logo"
         ? buildAutoPresets()
         : [buildManualPreset()];
 
@@ -916,7 +1017,7 @@ async function autoTraceImage() {
     drawDxfPreview(currentDxfPolylines);
     downloadDxfBtn.disabled = false;
 
-    if (traceMode.value === "auto") {
+    if (traceMode.value === "auto" || traceMode.value === "logo") {
       if (best.preset.mode === "color") {
         numColors.value = String(best.preset.colors);
       } else {
@@ -937,7 +1038,7 @@ async function autoTraceImage() {
     tracedSvgString = "";
     currentDxfPolylines = [];
     setDefaultDxfCanvas();
-    setStatus("Trace failed. Try a cleaner PNG or stronger background cleanup.");
+    setStatus("Trace failed. Try Logo Mode, adjust threshold, or use a cleaner PNG.");
   } finally {
     hideLoading();
   }
@@ -1057,7 +1158,7 @@ pngFile.addEventListener("change", (event) => {
       setDefaultDxfCanvas();
       downloadDxfBtn.disabled = true;
 
-      setStatus(`Loaded ${file.name}. Click Auto Trace PNG and NorrisDXF will do the heavy lifting.`);
+      setStatus(`Loaded ${file.name}. Try Logo Mode for marks with letters and interior cutouts.`);
     };
     img.src = e.target.result;
   };
@@ -1081,7 +1182,7 @@ pngFile.addEventListener("change", (event) => {
   });
 });
 
-[removeLightBg, removeSmallJunk, preferLogoShapes].forEach((el) => {
+[removeLightBg, removeSmallJunk, preferLogoShapes, detectInteriorHoles].forEach((el) => {
   el.addEventListener("change", () => {
     if (originalImage) showCurrentImagePreview();
   });
