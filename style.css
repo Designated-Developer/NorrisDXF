@@ -84,7 +84,8 @@ body {
 
 .section h2,
 .panel-header h2,
-.notes h2 {
+.notes h2,
+.action-panel-header h2 {
   margin: 0 0 12px;
   font-size: 18px;
 }
@@ -238,6 +239,52 @@ canvas {
   display: block;
 }
 
+.action-panel {
+  overflow: hidden;
+}
+
+.action-panel-header {
+  padding: 16px 18px 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.action-panel-header p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.action-panel-body {
+  padding: 16px 18px 18px;
+  display: grid;
+  gap: 16px;
+}
+
+.action-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.2fr;
+  gap: 14px;
+  align-items: end;
+}
+
+.action-field {
+  min-width: 0;
+}
+
+.action-field-wide {
+  min-width: 0;
+}
+
+.action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.action-buttons .btn {
+  min-width: 180px;
+}
+
 .notes {
   padding: 18px;
 }
@@ -314,5 +361,18 @@ canvas {
 
   .preview-grid {
     grid-template-columns: 1fr;
+  }
+
+  .action-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .action-buttons {
+    flex-direction: column;
+  }
+
+  .action-buttons .btn {
+    width: 100%;
+    min-width: 0;
   }
 }
